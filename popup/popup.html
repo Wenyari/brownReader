@@ -1,48 +1,22 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-CN">
 <head>
-    <meta charset="utf-8"> 
-    <title>摸鱼king</title>
-    <link rel="stylesheet" type="text/css" href="popup.css"/>
+    <meta charset="utf-8">
+    <title>brown reader</title>
+    <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-    <div>
-        <div class="row">
-            <div class="lable">导入小说:</div>
-            <div class="btn" id="importBtn">导入</div>
-        </div>
-        <div class="row">
-            <div class="lable">选择小说:</div>
-            <select id="mySelect" name="mySelect">
-            </select>
-        </div>
-        <div class="row">
-            <div class="lable">页码:</div>
-            <input class="value" oninput = "value=value.replace(/[^\d]/g,'')" id="myPageNum"/>
-        </div>
-        <div class="row">
-            <div class="lable">每页字符:</div>
-            <input class="value" oninput = "value=value.replace(/[^\d]/g,'')" id="myPageSize"/>
-            </select>
-        </div>
-        <div class="row">
-            <div class="lable">背景颜色:</div>
-            <input class="value" type="color" id="bgColor" value="#000000">
-        </div>
-        <div class="row">
-            <div class="lable">背景透明:</div>
-            <input class="value" type="range" id="bgOpacity" min="0" max="1" step="0.1" value="0.1">
-        </div>
-        <div class="row">
-            <div class="lable">文字颜色:</div>
-            <input class="value" type="color" id="textColor" value="#ffffff">
-        </div>
-        <div class="row">
-            <div class="lable">文字透明:</div>
-            <input class="value" type="range" id="textOpacity" min="0" max="1" step="0.1" value="1">
-        </div>
-        <input style="display: none;" type="file" id="fileInput">
-    </div>
+    <div class="row"><button id="importBtn" type="button">导入 TXT / EPUB</button></div>
+    <div class="row"><label for="mySelect">选择小说</label><select id="mySelect" disabled></select></div>
+    <div class="row"><label for="readingProgress">阅读进度 %</label><input id="readingProgress" type="number" min="0" max="100" step="0.01" disabled></div>
+    <p>按所选区域的实际空间自动分页，调整区域或字体后保留阅读位置。</p>
+    <button id="selectElementBtn" type="button" disabled>选择网页元素</button>
+    <p>点击网页中的纯文本 span/div 阅读，Esc 取消选择。刷新网页后需重新选择。</p>
+    <p>A / D 翻页，F1 切换原文字与小说。</p>
+    <p id="status" role="status" aria-live="polite"></p>
+    <input id="fileInput" type="file" accept=".txt,.epub,text/plain,application/epub+zip" hidden>
+    <script src="../vendor/fflate/fflate-0.8.3.min.js"></script>
+    <script src="epub.js"></script>
     <script src="popup.js"></script>
 </body>
 </html>

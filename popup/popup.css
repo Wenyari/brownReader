@@ -1,20 +1,27 @@
-.row{
+body {
+    width: 300px;
+    margin: 16px;
+    color: #333;
+    font: 13px/1.5 sans-serif;
+}
+.row {
     display: flex;
-    margin-top: 10px;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
 }
-.lable{
-    width: 100px;
-}
-.value{
-    flex: 1;
-}
-.btn{
-    width: 35px;
-    height: 20px;
-    line-height: 20px;
-    border-radius: 3px;
-    background-color: #409EFF;
-    text-align: center;
-    color: #fff;
+label { width: 72px; flex-shrink: 0; }
+input, select { min-width: 0; flex: 1; padding: 5px; }
+button {
+    padding: 7px 12px;
+    border: 1px solid #aaa;
+    border-radius: 4px;
+    background: #f3f3f3;
+    color: #333;
     cursor: pointer;
 }
+button:disabled { cursor: default; opacity: .5; }
+#selectElementBtn { width: 100%; }
+p { color: #666; }
+#status { min-height: 20px; overflow-wrap: anywhere; }
+#status.error { color: #b42318; }

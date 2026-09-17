@@ -1,251 +1,116 @@
-const IDBUtil = {
-  dbName: "myDatabase",
-  storeName: "idStore",
-  version: 1, // 可以根据需要更新数据库结构时增加版本号
-
-  // 打开（或初始化）数据库
-  async openDB() {
-    return new Promise((resolve, reject) => {
-      const request = indexedDB.open(this.dbName, this.version);
-
-      request.onerror = (event) => {
-        console.error("Database error:", event.target.errorCode);
-        reject(event.target.errorCode);
-      };
-
-      // 第一次创建数据库或版本更新时触发
-      request.onupgradeneeded = (event) => {
-        const db = event.target.result;
-        // 创建一个新的存储对象
-        if (!db.objectStoreNames.contains(this.storeName)) {
-          db.createObjectStore(this.storeName, {
-            keyPath: "id",
-            autoIncrement: false,
-          });
-        }
-      };
-
-      request.onsuccess = (event) => {
-        console.log("Database opened successfully");
-        resolve(event.target.result);
-      };
-    });
-  },
-
-  // 设置ID值
-  async setId(id) {
-    const db = await this.openDB();
-    const transaction = db.transaction(this.storeName, "readwrite");
-    const store = transaction.objectStore(this.storeName);
-    const request = store.put({ id: "unique", value: id });
-
-    return new Promise((resolve, reject) => {
-      request.onsuccess = () => {
-        console.log("ID stored successfully");
-        resolve();
-      };
-      request.onerror = (event) => {
-        console.error("Error storing the ID:", event.target.errorCode);
-        reject(event.target.errorCode);
-      };
-    });
-  },
-
-  // 获取ID值
-  async getId() {
-    const db = await this.openDB();
-    const transaction = db.transaction(this.storeName, "readonly");
-    const store = transaction.objectStore(this.storeName);
-    const request = store.get("unique");
-
-    return new Promise((resolve, reject) => {
-      request.onsuccess = () => {
-        if (request.result) {
-          console.log("ID retrieved successfully:", request.result.value);
-          resolve(request.result.value);
-        } else {
-          console.log("ID not found");
-          resolve(null);
-        }
-      };
-      request.onerror = (event) => {
-        console.error("Error retrieving the ID:", event.target.errorCode);
-        reject(event.target.errorCode);
-      };
-    });
-  },
-
-  // 更新ID值
-  async updateId(newId) {
-    // 此处的更新操作实际上与setId方法相同，因为put方法会替换已有记录或新增一条记录
-    return this.setId(newId);
-  },
-};
-
-// 打开（或创建）数据库
-const openDB = () => {
-  return new Promise((resolve, reject) => {
-    // 增加版本号以触发onupgradeneeded事件
-    const request = indexedDB.open("FileDB", 1);
-    request.onupgradeneeded = function (event) {
-      let db = event.target.result;
-      let transaction = event.target.transaction; // 获取引用的事务
-      if (!db.objectStoreNames.contains("files")) {
-        db.createObjectStore("files", { keyPath: "id", autoIncrement: true });
-      }
-      // 确保所有记录都有pageNum和pageSize字段
-      const store = transaction.objectStore("files");
-      store.openCursor().onsuccess = function (event) {
-        var cursor = event.target.result;
-        if (cursor) {
-          var updateData = cursor.value;
-          updateData.pageNum = updateData.pageNum || 0; // 默认值
-          updateData.pageSize = updateData.pageSize || 20; // 默认值
-          cursor.update(updateData);
-          cursor.continue();
-        }
-      };
-    };
-    request.onerror = function (event) {
-      console.error("Database error: ", event.target.errorCode);
-      reject(event.target.errorCode);
-    };
-    request.onsuccess = function (event) {
-      resolve(event.target.result);
-    };
-  });
-};
-const updatePageInfo = async (id, pageNum, pageSize) => {
-  const db = await openDB();
-  const transaction = db.transaction(["files"], "readwrite");
-  const store = transaction.objectStore("files");
-  const request = store.get(id);
-
-  return new Promise((resolve, reject) => {
-    request.onsuccess = () => {
-      const data = request.result;
-      if (data) {
-        data.pageNum = pageNum;
-        data.pageSize = pageSize;
-        const updateRequest = store.put(data);
-        updateRequest.onsuccess = () => {
-          console.log("Page info updated successfully");
-          resolve();
-        };
-        updateRequest.onerror = (event) => {
-          console.error("Error updating page info:", event.target.errorCode);
-          reject(event.target.errorCode);
-        };
-      } else {
-        console.log("No data found with id:", id);
-        reject("No data found");
-      }
-    };
-    request.onerror = (event) => {
-      console.error("Error fetching data to update:", event.target.errorCode);
-      reject(event.target.errorCode);
-    };
-  });
-};
-
-// 保存文件内容到IndexedDB
-const saveToDB = async (content, name) => {
-  const db = await openDB();
-  const transaction = db.transaction(["files"], "readwrite");
-  const store = transaction.objectStore("files");
-  const request = store.add({
-    content: content,
-    name: name,
-    pageNum: 0,
-    pageSize: 20,
-  });
-  request.onsuccess = () => {
-    let id = request.result;
-    IDBUtil.updateId(id).then(() => {
-      initData(id);
-    });
-  };
-  request.onerror = () => console.error("Error saving file content to DB");
-};
-
-const initData = async (id) => {
-  const db = await openDB();
-  const transaction = db.transaction(["files"], "readonly");
-  const store = transaction.objectStore("files");
-  const request = store.get(id * 1);
-  request.onsuccess = function (event) {
-    console.log("onsuccess", request);
-    if (request.result) {
-      const contents = request.result;
-      chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
-        var currentTab = tabs[0];
-        if (currentTab) {
-          chrome.tabs.sendMessage(
-            currentTab.id,
-            { action: "FROM_POPUP", data: { id, ...contents } },
-            function (response) {
-              console.log(response.status);
-            }
-          );
-        }
-      });
-    } else {
-      console.log("No data found with id:", id);
+const openDB = (name, storeName, keyPath, autoIncrement = false) => new Promise((resolve, reject) => {
+  const request = indexedDB.open(name, 1);
+  request.onupgradeneeded = () => {
+    if (!request.result.objectStoreNames.contains(storeName)) {
+      request.result.createObjectStore(storeName, { keyPath, autoIncrement });
     }
   };
-  request.onerror = function () {
-    console.error("Error fetching data:", request.error);
-  };
+  request.onsuccess = () => resolve(request.result);
+  request.onerror = () => reject(request.error);
+});
+
+const transact = async (database, storeName, mode, operation) => {
+  const db = await database;
+  try {
+    return await new Promise((resolve, reject) => {
+      const transaction = db.transaction(storeName, mode);
+      let result;
+      // 等事务提交成功再返回，避免导入后立即读取时拿到旧数据。
+      transaction.oncomplete = () => resolve(result);
+      transaction.onerror = () => reject(transaction.error || new Error('数据库操作失败'));
+      transaction.onabort = () => reject(transaction.error || new Error('数据库事务取消'));
+      operation(transaction.objectStore(storeName), (value) => { result = value; });
+    });
+  } finally {
+    db.close();
+  }
 };
-chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
-  if (request.action === "fetchDataFromIndexedDB") {
-    openDB().then((db) => {
-      const transaction = db.transaction(["files"], "readonly");
-      const store = transaction.objectStore("files");
-      const request = store.getAll();
-      request.onerror = function (event) {
-        sendResponse({ status: "error", data: event.target.errorCode });
-      };
-      request.onsuccess = function (event) {
-        const result = event.target.result;
-        console.log("fetchDataFromIndexedDB", event);
-        sendResponse({ status: "success", data: result });
-      };
-    });
-  }
-  if (request.action === "saveToDB") {
-    console.log("saveToDB", request);
-    saveToDB(request.data.content, request.data.name).then(() => {
-      sendResponse({ status: "success" });
-    });
-  }
-  if (request.action === "getId") {
-    IDBUtil.getId().then((id) => {
-      sendResponse({ status: "success", data: id });
-    });
-  }
-  if (request.action === "updateId") {
-    IDBUtil.updateId(request.data).then(() => {
-      initData(request.data).then(() => {
-        sendResponse({ status: "success" });
+
+const files = (mode, operation) => transact(openDB('FileDB', 'files', 'id', true), 'files', mode, operation);
+const selection = (mode, operation) => transact(openDB('myDatabase', 'idStore', 'id'), 'idStore', mode, operation);
+const getId = () => selection('readonly', (store, done) => {
+  store.get('unique').onsuccess = (event) => done(event.target.result?.value ?? null);
+});
+const setId = (id) => selection('readwrite', (store) => store.put({ id: 'unique', value: id }));
+// 旧页码只用于一次性迁移，之后始终保存正文中的绝对偏移量。
+const normalizeOffset = (content, offset) => {
+  let value = Math.min(Math.max(0, offset), Math.max(0, content.length - 1));
+  const code = content.charCodeAt(value);
+  if (value > 0 && code >= 0xdc00 && code <= 0xdfff) value--;
+  return value;
+};
+const getBook = (id) => files('readwrite', (store, done) => {
+  store.get(Number(id)).onsuccess = (event) => {
+    const book = event.target.result;
+    if (book && !Number.isSafeInteger(book.position)) {
+      const size = Number.isSafeInteger(book.pageSize) && book.pageSize > 0 ? book.pageSize : 20;
+      const page = Number.isSafeInteger(book.pageNum) && book.pageNum >= 0 ? book.pageNum : 0;
+      book.position = normalizeOffset(book.content, page * size);
+      delete book.pageNum;
+      delete book.pageSize;
+      store.put(book);
+    }
+    done(book ?? null);
+  };
+});
+
+const handleMessage = async (request) => {
+  switch (request.action) {
+    case 'fetchDataFromIndexedDB':
+      return files('readonly', (store, done) => {
+        store.getAll().onsuccess = (event) => done(event.target.result);
       });
-    });
-  }
-  if (request.action === "updatePage") {
-    updatePageInfo(
-      request.data.id,
-      request.data.pageNum,
-      request.data.pageSize
-    ).then(() => {
-      sendResponse({ status: "success" });
-    });
-  }
-  if (request.action === "initPage") {
-    IDBUtil.getId().then((id) => {
-      initData(id).then(() => {
-        sendResponse({ status: "success" });
+    case 'getId':
+      return getId();
+    case 'getCurrentBook': {
+      const id = await getId();
+      return id === null ? null : getBook(id);
+    }
+    case 'saveToDB': {
+      const { content, name } = request.data || {};
+      if (typeof content !== 'string' || !content.trim() || typeof name !== 'string' || !name.trim()) throw new Error('文件内容或名称无效');
+      const id = await files('readwrite', (store, done) => {
+        store.add({ content, name, position: 0 }).onsuccess = (event) => done(event.target.result);
       });
-    });
+      await setId(id);
+      return getBook(id);
+    }
+    case 'updateId': {
+      const id = Number(request.data);
+      if (!Number.isInteger(id) || id <= 0) throw new Error('小说编号无效');
+      const book = await getBook(id);
+      if (!book) throw new Error('小说不存在，请重新导入');
+      await setId(id);
+      return book;
+    }
+    case 'updatePosition': {
+      const { id, position } = request.data || {};
+      if (!Number.isSafeInteger(id) || id <= 0 || !Number.isSafeInteger(position) || position < 0) throw new Error('阅读位置必须为有效整数');
+      await files('readwrite', (store) => {
+        store.get(id).onsuccess = (event) => {
+          const book = event.target.result;
+          if (!book) {
+            store.transaction.abort();
+            return;
+          }
+          book.position = normalizeOffset(book.content, position);
+          delete book.pageNum;
+          delete book.pageSize;
+          store.put(book);
+        };
+      });
+      return getBook(id);
+    }
+    default:
+      throw new Error('未知操作');
   }
-  return true; // 异步响应
+};
+
+// 请求页面直接获得响应，后台不再向不确定的活动标签页推送小说。
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  handleMessage(request).then(
+    (data) => sendResponse({ status: 'success', data }),
+    (error) => sendResponse({ status: 'error', error: error.message || '操作失败' })
+  );
+  return true;
 });
