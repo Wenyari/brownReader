@@ -2,7 +2,7 @@
     "manifest_version": 3,
     "name": "brown reader",
     "version": "1.0",
-    "description": "摸鱼看小说",
+    "description": "文本阅读辅助工具",
     "permissions": [
         "activeTab",
         "storage",

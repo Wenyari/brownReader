@@ -42,7 +42,7 @@ const ensurePage = async () => {
     // 插件重载后，已打开的网页可能尚未加载内容脚本。
   }
   if (response?.status === 'success') {
-    if (response.pickerVersion !== 4) throw new Error('此网页仍在使用旧版选择器，请刷新网页后重试');
+    if (response.pickerVersion !== 8) throw new Error('此网页仍在使用旧版选择器，请刷新网页后重试');
     return;
   }
   try {

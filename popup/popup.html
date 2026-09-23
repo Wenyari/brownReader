@@ -11,8 +11,8 @@
     <div class="row"><label for="readingProgress">阅读进度 %</label><input id="readingProgress" type="number" min="0" max="100" step="0.01" disabled></div>
     <p>按所选区域的实际空间自动分页，调整区域或字体后保留阅读位置。</p>
     <button id="selectElementBtn" type="button" disabled>选择网页元素</button>
-    <p>点击网页中的纯文本 span/div 阅读，Esc 取消选择。刷新网页后需重新选择。</p>
-    <p>A / D 翻页，F1 切换原文字与小说。</p>
+    <p>点击网页中的纯文本 span/div，可点选多处拼接成一页，回车开始阅读，Esc 取消。刷新网页后自动重新绑定。</p>
+    <p>A / D 翻页，S 或 F1 切换原文字与小说。切到其他应用或标签页会自动还原原文字。</p>
     <p id="status" role="status" aria-live="polite"></p>
     <input id="fileInput" type="file" accept=".txt,.epub,text/plain,application/epub+zip" hidden>
     <script src="../vendor/fflate/fflate-0.8.3.min.js"></script>
