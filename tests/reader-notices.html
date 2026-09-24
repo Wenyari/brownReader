@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>RUNNING</title>
+<div id="reading" style="width:300px;height:60px;font:16px/20px sans-serif">原始网页文字</div>
+<pre id="result">RUNNING</pre>
+<script>
+const roots = [];
+const attachShadow = Element.prototype.attachShadow;
+// 测试保留 closed ShadowRoot 的引用，只观察提示，不修改生产脚本的封装。
+Element.prototype.attachShadow = function (options) {
+  const root = attachShadow.call(this, options);
+  roots.push(root);
+  return root;
+};
+const notices = () => roots.filter((root) => root.host.isConnected)
+  .flatMap((root) => [...root.querySelectorAll('.notice')])
+  .filter((node) => node.style.display !== 'none');
+const listeners = [];
+const book = { id: 1, content: '第一章 小说正文内容。'.repeat(100), position: 0 };
+const anchor = `anchor:${location.origin}${location.pathname}`;
+const data = { [anchor]: { paths: ['body:0>div:0'] } };
+globalThis.chrome = {
+  runtime: {
+    onMessage: { addListener: (listener) => listeners.push(listener) },
+    sendMessage: async () => ({ status: 'success', data: { ...book } }),
+  },
+  storage: { local: {
+    get: async (key) => ({ [key]: data[key] }),
+    set: async (values) => Object.assign(data, values),
+  } },
+};
+</script>
+<script src="../content/content.js"></script>
+<script src="../content/content.js"></script>
+<script>
+(async () => {
+  const results = [];
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const assert = (value, text) => { if (!value) throw new Error(text); };
+  const test = async (name, run) => {
+    try { await run(); results.push(`PASS ${name}`); }
+    catch (error) { results.push(`FAIL ${name}: ${error.message}`); }
+  };
+  const press = (key) => window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+  const reading = document.getElementById('reading');
+  await wait(100);
+  await test('重复注入不会创建第二个脚本实例', () => {
+    assert(listeners.length === 1 && notices().length === 1, '重复注册或恢复提示异常');
+  });
+  await test('切走页面清除提示，S 恢复正文', () => {
+    window.dispatchEvent(new Event('blur'));
+    assert(notices().length === 0, '恢复区域提示在失焦后残留');
+    press('s');
+    assert(reading.textContent.startsWith('第一章'), 'S 未显示正文');
+    window.dispatchEvent(new Event('resize'));
+    window.dispatchEvent(new Event('blur'));
+    assert(reading.textContent === '原始网页文字' && notices().length === 0, '未还原或未清理提示');
+  });
+  await test('切页后待执行排版不再产生提示', async () => {
+    reading.remove();
+    await wait(60);
+    assert(notices().length === 0, '隐藏后的排版生成了错误提示');
+    document.body.prepend(reading);
+    press('s');
+    assert(reading.textContent.startsWith('第一章') && notices().length === 0, '重新挂载后未恢复');
+  });
+  await test('临时卸载后 S 可恢复，失效提示被彻底移除', async () => {
+    reading.remove();
+    window.dispatchEvent(new Event('resize'));
+    await wait(60);
+    assert(notices().some((notice) => notice.textContent.includes('移除')), '未触发失效提示');
+    document.body.prepend(reading);
+    press('s');
+    assert(reading.textContent.startsWith('第一章') && notices().length === 0, '正文恢复后提示残留');
+  });
+  await test('元素失效提示自动消失', async () => {
+    reading.remove();
+    window.dispatchEvent(new Event('resize'));
+    await wait(60);
+    assert(notices().length === 1, '缺少失效提示');
+    await wait(4200);
+    assert(notices().length === 0, '失效提示持续存在');
+    document.body.prepend(reading);
+    press('s');
+  });
+  await test('visibilitychange 隐藏正文并清理提示', () => {
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+    assert(reading.textContent === '原始网页文字' && notices().length === 0, '标签页隐藏未清理');
+    delete document.hidden;
+  });
+  document.getElementById('result').textContent = results.join('\n');
+  document.title = results.some((line) => line.startsWith('FAIL')) ? 'FAIL' : 'PASS';
+})();
+</script>

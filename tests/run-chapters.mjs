@@ -44,7 +44,7 @@ try {
   });
   const { targetId } = await send('Target.createTarget', { url: 'about:blank' });
   const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true });
-  await send('Page.navigate', { url: new URL('./chapters.html', import.meta.url).href }, sessionId);
+  await send('Page.navigate', { url: new URL(process.argv[3] || './chapters.html', import.meta.url).href }, sessionId);
   // 按真实完成状态等待，虚拟时间预算可能在 IndexedDB 事务结束前耗尽。
   let output;
   for (let attempt = 0; attempt < 200; attempt++) {

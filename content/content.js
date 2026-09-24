@@ -70,7 +70,7 @@
     }
   };
 
-  const announce = (text, timeout = 0) => {
+  const announce = (text, timeout = 4000) => {
     ensureOverlay();
     notice.style.display = 'block';
     notice.textContent = text;
@@ -187,7 +187,7 @@
   const guide = () => {
     announce(picked.length
       ? `已选 ${picked.length} 处，按回车开始阅读；再次点击可取消该处；Esc 退出`
-      : '点击纯文本 span/div 选择阅读区域，可点选多处拼接；蓝色可选，红色不可选；Esc 取消');
+      : '点击纯文本 span/div 选择阅读区域，可点选多处拼接；蓝色可选，红色不可选；Esc 取消', 0);
   };
 
   const stopSelection = () => {
@@ -202,9 +202,13 @@
   };
 
   const restore = () => {
+    // 隐藏后取消排队中的排版，避免切页期间继续检查临时卸载的元素。
+    cancelAnimationFrame(layoutFrame);
+    layoutFrame = 0;
     // 保留原节点引用，恢复时不通过 HTML 字符串重建网页内容。
     if (showing) restoreNodes();
     showing = false;
+    clearNotice();
   };
 
   // 翻页历史跟着小说走，换页面继续读时仍能原路返回。
@@ -342,11 +346,10 @@
   };
 
   const render = () => {
-    spots = spots.filter((spot) => spot.element.isConnected);
-    if (!spots.length) {
+    // SPA 切页可能暂时移除再挂回原节点；保留引用供 S 重试，不能永久过滤掉。
+    if (!spots.length || spots.some((spot) => !spot.element.isConnected)) {
+      restoreNodes();
       showing = false;
-      resizeObserver.disconnect();
-      styleObserver.disconnect();
       announce('阅读位置已被网页移除，请重新选择元素');
       return false;
     }
@@ -498,7 +501,11 @@
 
   // 切换应用或标签页时立即还原原文字；返回页面不自动显示，须再次按 S 或 F1。
   window.addEventListener('blur', () => {
-    if (showing) restore();
+    if (!selecting) restore();
+  });
+  // 标签页隐藏不一定触发 blur，统一清理正文、提示及待执行排版。
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && !selecting) restore();
   });
 
   // 同一路径下的页面共用一条记录，query 与 hash 变化不影响命中。
