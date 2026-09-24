@@ -47,21 +47,51 @@
     const blocks = new Set(['p', 'div', 'section', 'article', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'blockquote', 'pre', 'tr', 'dl', 'dt', 'dd']);
     const skipped = new Set(['script', 'style', 'nav', 'noscript', 'iframe', 'object', 'svg', 'math', 'rt', 'rp']);
     const chunks = [];
+    const anchors = [];
+    let length = 0;
+    const append = (text) => { chunks.push(text); length += text.length; };
     const visit = (node) => {
       if (node.nodeType === Node.TEXT_NODE || node.nodeType === Node.CDATA_SECTION_NODE) {
-        chunks.push(node.textContent.replace(/\s+/g, ' '));
+        append(node.textContent.replace(/\s+/g, ' '));
         return;
       }
       if (node.nodeType !== Node.ELEMENT_NODE || skipped.has(node.localName) || node.hasAttribute('hidden') || node.getAttribute('aria-hidden') === 'true') return;
       const name = node.localName;
-      if (name === 'br' || name === 'hr') { chunks.push('\n'); return; }
-      if (blocks.has(name)) chunks.push('\n\n');
+      if (blocks.has(name)) append('\n\n');
+      const id = node.getAttribute('id') || node.getAttribute('xml:id');
+      if (id) anchors.push({ id, position: length });
+      if (name === 'br' || name === 'hr') { append('\n'); return; }
       for (const child of node.childNodes) visit(child);
-      if (blocks.has(name)) chunks.push('\n\n');
-      if (name === 'td' || name === 'th') chunks.push(' ');
+      if (blocks.has(name)) append('\n\n');
+      if (name === 'td' || name === 'th') append(' ');
     };
     visit(body);
-    return chunks.join('').replace(/[^\S\n]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+    let text = chunks.join('');
+    // 每轮空白归一化同步调整锚点，不能拿 XHTML 或未清洗正文的位置直接跳转。
+    const replace = (pattern, replacement) => {
+      let cursor = 0;
+      let delta = 0;
+      for (const match of text.matchAll(pattern)) {
+        const end = match.index + match[0].length;
+        while (cursor < anchors.length && anchors[cursor].position < match.index) anchors[cursor++].position += delta;
+        while (cursor < anchors.length && anchors[cursor].position <= end) {
+          const anchor = anchors[cursor++];
+          anchor.position = match.index + delta + Math.min(anchor.position - match.index, replacement.length);
+        }
+        delta += replacement.length - match[0].length;
+      }
+      while (cursor < anchors.length) anchors[cursor++].position += delta;
+      text = text.replace(pattern, replacement);
+    };
+    replace(/[^\S\n]+/g, ' ');
+    replace(/ *\n */g, '\n');
+    replace(/\n{3,}/g, '\n\n');
+    replace(/^\s+|\s+$/g, '');
+    // 指向标题前空白的容器锚点定位到下一个实际字符。
+    for (const anchor of anchors) {
+      while (anchor.position < text.length && /\s/.test(text[anchor.position])) anchor.position++;
+    }
+    return { text, anchors: new Map(anchors.map(({ id, position }) => [id, position])) };
   };
 
   const read = async (buffer) => {
@@ -105,7 +135,9 @@
     const spine = elements(opf, 'spine')[0];
     if (!manifest || !spine) throw new Error('EPUB 缺少章节清单或阅读顺序');
     const items = new Map(elements(manifest, 'item').map((node) => [node.getAttribute('id'), node]));
-    const chapters = [];
+    const sections = [];
+    const documents = new Map();
+    let contentLength = 0;
     // 必须使用 spine 顺序；ZIP 顺序和文件名排序都不能代表真实阅读顺序。
     for (const ref of elements(spine, 'itemref')) {
       if (ref.getAttribute('linear') === 'no') continue;
@@ -115,13 +147,67 @@
       if (item.getAttribute('media-type') !== 'application/xhtml+xml') throw new Error('EPUB 包含不支持的正文格式，仅支持 XHTML 文字章节');
       const path = resolvePath(opfPath, item.getAttribute('href'));
       if (encryptedPaths.has(path)) throw new Error('不支持带 DRM 或正文加密的 EPUB');
-      const text = extractText(parseXML(readEntry(path), path));
-      if (text) chapters.push(text);
+      const { text, anchors } = extractText(parseXML(readEntry(path), path));
+      if (text) {
+        if (sections.length) contentLength += 2;
+        documents.set(path, { start: contentLength, text, anchors });
+        sections.push(text);
+        contentLength += text.length;
+      }
       // 章节之间让出事件循环，弹窗可以继续显示导入状态。
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
-    if (!chapters.length) throw new Error('EPUB 中没有可读取的文字正文');
-    return chapters.join('\n\n');
+    if (!sections.length) throw new Error('EPUB 中没有可读取的文字正文');
+    const chapters = [];
+    const addChapter = (title, href, base, level) => {
+      if (!title || !href) return;
+      // 同文件 #id 和跨文件 path#id 都以目录文件为基准解析。
+      const path = href.startsWith('#') ? base : resolvePath(base, href);
+      const section = documents.get(path);
+      // 封面、导航页及非线性附录没有进入正文，不提供不可达的跳转项。
+      if (!section) return;
+      let fragment;
+      try { fragment = decodeURIComponent(href.includes('#') ? href.slice(href.indexOf('#') + 1) : ''); }
+      catch (_) { throw new Error('EPUB 目录锚点编码无效'); }
+      const offset = fragment ? section.anchors.get(fragment) : 0;
+      if (offset === undefined || offset >= section.text.length) return;
+      chapters.push({ title: title.replace(/\s+/g, ' ').trim(), position: section.start + offset, level });
+    };
+    const navItem = Array.from(items.values()).find((item) => (item.getAttribute('properties') || '').split(/\s+/).includes('nav'));
+    const ncxItem = items.get(spine.getAttribute('toc'));
+    const tocItem = navItem || ncxItem;
+    if (tocItem) {
+      const tocPath = resolvePath(opfPath, tocItem.getAttribute('href'));
+      if (encryptedPaths.has(tocPath)) throw new Error('不支持加密的 EPUB 目录');
+      const toc = parseXML(readEntry(tocPath), tocPath);
+      if (navItem) {
+        const nav = elements(toc, 'nav').find((node) =>
+          (node.getAttributeNS('http://www.idpf.org/2007/ops', 'type') || '').split(/\s+/).includes('toc'));
+        if (nav) {
+          for (const link of elements(nav, 'a')) {
+            let level = -1;
+            for (let parent = link.parentElement; parent && parent !== nav; parent = parent.parentElement) {
+              if (parent.localName === 'ol') level++;
+            }
+            addChapter(link.textContent.trim(), link.getAttribute('href'), tocPath, Math.max(0, level));
+          }
+        }
+      } else {
+        const navMap = elements(toc, 'navMap')[0];
+        if (navMap) {
+          for (const point of elements(navMap, 'navPoint')) {
+            const label = Array.from(point.children).find((node) => node.localName === 'navLabel');
+            const target = Array.from(point.children).find((node) => node.localName === 'content');
+            let level = 0;
+            for (let parent = point.parentElement; parent && parent !== navMap; parent = parent.parentElement) {
+              if (parent.localName === 'navPoint') level++;
+            }
+            addChapter(label?.textContent.trim(), target?.getAttribute('src'), tocPath, level);
+          }
+        }
+      }
+    }
+    return { content: sections.join('\n\n'), chapters };
   };
 
   globalThis.brownReaderEpub = { read, MAX_FILE_BYTES };

@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>章节解析验证</title>
+<pre id="result">RUNNING</pre>
+<script src="../vendor/fflate/fflate-0.8.3.min.js"></script>
+<script src="../popup/epub.js"></script>
+<script src="../popup/txt.js"></script>
+<script>
+// 使用真实 IndexedDB，只有扩展通信和标签页接口替换为测试实现。
+let receiver;
+let lastPageBook;
+globalThis.chrome = {
+  runtime: {
+    onMessage: { addListener: (listener) => { receiver = listener; } },
+    sendMessage: (request) => new Promise((resolve) => receiver(request, {}, resolve)),
+  },
+  tabs: {
+    query: async () => [{ id: 1 }],
+    get: async () => ({ url: 'https://example.com/reading' }),
+    sendMessage: async (id, request) => {
+      if (request.action === 'FROM_POPUP') lastPageBook = request.data;
+      return { status: 'success', pickerVersion: 8 };
+    },
+  },
+};
+</script>
+<script src="../background.js"></script>
+<script>
+(async () => {
+  const results = [];
+  const assert = (condition, message) => { if (!condition) throw new Error(message); };
+  const test = async (name, run) => {
+    try { await run(); results.push(`PASS ${name}`); }
+    catch (error) { results.push(`FAIL ${name}: ${error.message}`); }
+  };
+  const xhtml = (body) => `<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body>${body}</body></html>`;
+  const makeBook = ({ version = 3, toc = true, missingAnchor = false } = {}) => {
+    const files = {
+      mimetype: 'application/epub+zip',
+      'META-INF/container.xml': '<container><rootfiles><rootfile media-type="application/oebps-package+xml" full-path="book/content.opf"/></rootfiles></container>',
+      'book/content.opf': `<package><manifest><item id="one" href="text/one.xhtml" media-type="application/xhtml+xml"/><item id="two" href="text/two.xhtml" media-type="application/xhtml+xml"/>${toc ? version === 3 ? '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>' : '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>' : ''}</manifest><spine${toc && version === 2 ? ' toc="ncx"' : ''}><itemref idref="one"/><itemref idref="two"/></spine></package>`,
+      'book/text/one.xhtml': xhtml('  <h1 id="first">第一章 开始</h1><p>甲 &amp; 乙 😀</p>  <section id="second"> \n <h2>第二章 后续</h2><p>后续正文</p></section><script>忽略脚本<\/script>'),
+      'book/text/two.xhtml': xhtml('<h1 id="第三章">第三章 结束</h1><p>最后正文</p>'),
+      'book/nav.xhtml': xhtml(`<nav epub:type="toc"><ol><li><a href="text/one.xhtml#first">第一章</a><ol><li><a href="text/one.xhtml#${missingAnchor ? 'missing' : 'second'}">第二章</a></li></ol></li><li><a href="text/two.xhtml#%E7%AC%AC%E4%B8%89%E7%AB%A0">第三章</a></li><li><a href="appendix.xhtml">附录</a></li></ol></nav>`),
+      'book/toc.ncx': '<ncx><navMap><navPoint><navLabel><text>第一章</text></navLabel><content src="text/one.xhtml#first"/><navPoint><navLabel><text>第二章</text></navLabel><content src="text/one.xhtml#second"/></navPoint></navPoint><navPoint><navLabel><text>第三章</text></navLabel><content src="text/two.xhtml"/></navPoint></navMap></ncx>',
+    };
+    return fflate.zipSync(Object.fromEntries(Object.entries(files).map(([path, text]) => [path, fflate.strToU8(text)]))).buffer;
+  };
+  await test('TXT 中文、英文标题及 CRLF 原始位置', () => {
+    const content = '\uFEFF序章\r\n正文 😀\r\n  第一章 开始\r\n内容\nChapter 2: Next\n更多内容\n后记';
+    const chapters = brownReaderTxt.readChapters(content);
+    assert(chapters.length === 4, '应识别四个章节');
+    for (const chapter of chapters) assert(content.slice(chapter.position).startsWith(chapter.title), '正文位置错误');
+  });
+  await test('TXT 无目录与正文内提及章节', () => {
+    assert(brownReaderTxt.readChapters('这是正文，第一章故事已经结束。\n普通文本').length === 0, '误识别正文');
+    assert(brownReaderTxt.readChapters('').length === 0, '空正文');
+  });
+  for (const version of [2, 3]) {
+    await test(`EPUB ${version} 目录、层级与精确锚点`, async () => {
+      const { content, chapters } = await brownReaderEpub.read(makeBook({ version }));
+      assert(chapters.length === 3, '目录数量错误');
+      assert(chapters.map((chapter) => chapter.level).join() === '0,1,0', '层级错误');
+      for (const chapter of chapters) assert(content.slice(chapter.position).startsWith(chapter.title), `锚点错位：${chapter.title}`);
+      assert(content.includes('甲 & 乙 😀'), '正文清洗改变了有效文字');
+      assert(!content.includes('忽略脚本'), '未过滤脚本');
+      assert(content === '第一章 开始\n\n甲 & 乙 😀\n\n第二章 后续\n\n后续正文\n\n第三章 结束\n\n最后正文', '正文格式发生变化');
+    });
+  }
+  await test('EPUB 缺少目录仍返回正文，不生成虚构章节', async () => {
+    const book = await brownReaderEpub.read(makeBook({ toc: false }));
+    assert(book.content.length > 0 && book.chapters.length === 0, '无目录处理错误');
+  });
+  await test('EPUB 失效锚点不产生错误跳转', async () => {
+    const book = await brownReaderEpub.read(makeBook({ missingAnchor: true }));
+    assert(book.chapters.length === 2 && !book.chapters.some((chapter) => chapter.title === '第二章'), '失效锚点被加入目录');
+  });
+  await test('章节保存、弹窗跳转、页面同步及进度恢复', async () => {
+    const parsed = await brownReaderEpub.read(makeBook());
+    const saved = await handleMessage({ action: 'saveToDB', data: { ...parsed, name: '测试.epub' } });
+    assert(saved.chapters.length === 3, '目录未保存');
+    const container = document.createElement('div');
+    container.hidden = true;
+    container.innerHTML = '<select id="mySelect"></select><select id="chapterSelect"></select><input id="readingProgress"><button id="importBtn"></button><button id="selectElementBtn"></button><input id="fileInput" type="file"><p id="status"></p>';
+    document.body.appendChild(container);
+    await new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = '../popup/popup.js';
+      script.onload = resolve;
+      script.onerror = reject;
+      document.body.appendChild(script);
+    });
+    const waitFor = async (check) => {
+      for (let attempt = 0; attempt < 100; attempt++) {
+        if (check()) return;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      throw new Error('弹窗操作超时');
+    };
+    const select = document.getElementById('chapterSelect');
+    await waitFor(() => !select.disabled && select.options.length === 4);
+    select.value = '1';
+    select.dispatchEvent(new Event('change'));
+    await waitFor(() => !select.disabled && lastPageBook?.position === parsed.chapters[1].position);
+    const restored = await handleMessage({ action: 'getCurrentBook' });
+    assert(restored.position === parsed.chapters[1].position, '跳转进度未保存');
+    assert(select.value === '1', '当前章节未更新');
+    select.value = '';
+    select.dispatchEvent(new Event('change'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert((await handleMessage({ action: 'getCurrentBook' })).position === restored.position, '空选项错误跳到第 0 章');
+  });
+  await test('后台拒绝越界目录与错误字段类型', async () => {
+    for (const chapters of ['invalid', [{ title: '第一章', position: 100, level: 0 }], [{ title: '第一章', position: 0, level: '0' }]]) {
+      let rejected = false;
+      try { await handleMessage({ action: 'saveToDB', data: { content: '正文', name: '测试.txt', chapters } }); }
+      catch (_) { rejected = true; }
+      assert(rejected, '无效目录被保存');
+    }
+    const saved = await handleMessage({ action: 'saveToDB', data: { content: '正文', name: '无目录.txt', chapters: null } });
+    assert(Array.isArray(saved.chapters) && saved.chapters.length === 0, '空值未归一化');
+  });
+  document.getElementById('result').textContent = results.join('\n');
+  document.title = results.some((line) => line.startsWith('FAIL')) ? 'FAIL' : 'PASS';
+})();
+</script>
+</html>

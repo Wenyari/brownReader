@@ -67,10 +67,16 @@ const handleMessage = async (request) => {
       return id === null ? null : getBook(id);
     }
     case 'saveToDB': {
-      const { content, name } = request.data || {};
+      const { content, name, chapters: inputChapters } = request.data || {};
       if (typeof content !== 'string' || !content.trim() || typeof name !== 'string' || !name.trim()) throw new Error('文件内容或名称无效');
+      // 目录允许为空，但不接受非数组或超出正文的章节位置。
+      const chapters = inputChapters == null ? [] : inputChapters;
+      if (!Array.isArray(chapters) || chapters.some((chapter) => !chapter ||
+        typeof chapter.title !== 'string' || !chapter.title.trim() ||
+        !Number.isSafeInteger(chapter.position) || chapter.position < 0 || chapter.position >= content.length ||
+        !Number.isSafeInteger(chapter.level) || chapter.level < 0)) throw new Error('章节目录无效');
       const id = await files('readwrite', (store, done) => {
-        store.add({ content, name, position: 0 }).onsuccess = (event) => done(event.target.result);
+        store.add({ content, name, chapters, position: 0 }).onsuccess = (event) => done(event.target.result);
       });
       await setId(id);
       return getBook(id);

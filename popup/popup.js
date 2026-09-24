@@ -15,11 +15,33 @@ const request = async (action, data) => {
 const controls = () => {
   for (const id of ['mySelect', 'readingProgress', 'selectElementBtn']) element(id).disabled = busy || !currentBook;
   element('importBtn').disabled = busy;
+  element('chapterSelect').disabled = busy || !currentBook?.chapters?.length;
 };
 const showBook = (book) => {
   currentBook = book;
   element('readingProgress').value = book ? (100 * book.position / Math.max(1, book.content.length)).toFixed(2) : '';
   if (book) element('mySelect').value = String(book.id);
+  const chapters = Array.isArray(book?.chapters) ? book.chapters : [];
+  const select = element('chapterSelect');
+  select.replaceChildren();
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = chapters.length ? '选择章节' : book && !Array.isArray(book.chapters) ? '重新导入以生成目录' : '暂无可用章节';
+  select.appendChild(placeholder);
+  let selected = '';
+  let nearest = -1;
+  chapters.forEach((chapter, index) => {
+    const option = document.createElement('option');
+    option.value = String(index);
+    option.textContent = `${'　'.repeat(Math.min(chapter.level, 6))}${chapter.title}`;
+    select.appendChild(option);
+    // EPUB 目录保留层级顺序，当前章节按正文位置确定。
+    if (chapter.position <= book.position && chapter.position >= nearest) {
+      nearest = chapter.position;
+      selected = String(index);
+    }
+  });
+  select.value = selected;
   controls();
 };
 const run = async (operation) => {
@@ -81,14 +103,16 @@ element('fileInput').addEventListener('change', () => run(async () => {
   status(isEpub ? '正在解析 EPUB，请保持弹窗打开…' : '正在导入 TXT…');
   const bytes = await file.arrayBuffer();
   let content;
+  let chapters;
   if (isEpub) {
-    content = await brownReaderEpub.read(bytes);
+    ({ content, chapters } = await brownReaderEpub.read(bytes));
   } else {
     try { content = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
     catch (_) { content = new TextDecoder('gbk').decode(bytes); }
+    chapters = brownReaderTxt.readChapters(content);
   }
   if (!content.trim()) throw new Error('文件为空，请选择有正文的小说');
-  await request('saveToDB', { content, name: file.name });
+  await request('saveToDB', { content, chapters, name: file.name });
   await refreshBooks();
   status('已导入，请点击「选择网页元素」');
   await syncBook();
@@ -107,6 +131,17 @@ element('readingProgress').addEventListener('change', () => run(async () => {
   const position = Math.floor(currentBook.content.length * progress / 100);
   showBook(await request('updatePosition', { id: currentBook.id, position }));
   status('阅读位置已保存');
+  await syncBook();
+}));
+element('chapterSelect').addEventListener('change', () => run(async () => {
+  const value = element('chapterSelect').value;
+  // 空选项不转换为第 0 章；索引与目标位置均须通过类型检查。
+  const index = typeof value === 'string' && value.trim() !== '' ? Number(value) : null;
+  if (index === null) return;
+  const chapter = Number.isSafeInteger(index) && index >= 0 ? currentBook?.chapters?.[index] : null;
+  if (!chapter || !Number.isSafeInteger(chapter.position)) throw new Error('章节位置无效，请重新导入');
+  showBook(await request('updatePosition', { id: currentBook.id, position: chapter.position }));
+  status(`已跳转至：${chapter.title}`);
   await syncBook();
 }));
 element('selectElementBtn').addEventListener('click', () => run(async () => {

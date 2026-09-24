@@ -8,6 +8,7 @@
 <body>
     <div class="row"><button id="importBtn" type="button">导入 TXT / EPUB</button></div>
     <div class="row"><label for="mySelect">选择小说</label><select id="mySelect" disabled></select></div>
+    <div class="row"><label for="chapterSelect">章节目录</label><select id="chapterSelect" disabled></select></div>
     <div class="row"><label for="readingProgress">阅读进度 %</label><input id="readingProgress" type="number" min="0" max="100" step="0.01" disabled></div>
     <p>按所选区域的实际空间自动分页，调整区域或字体后保留阅读位置。</p>
     <button id="selectElementBtn" type="button" disabled>选择网页元素</button>
@@ -17,6 +18,7 @@
     <input id="fileInput" type="file" accept=".txt,.epub,text/plain,application/epub+zip" hidden>
     <script src="../vendor/fflate/fflate-0.8.3.min.js"></script>
     <script src="epub.js"></script>
+    <script src="txt.js"></script>
     <script src="popup.js"></script>
 </body>
 </html>
